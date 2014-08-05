@@ -1,38 +1,37 @@
 #define COMPACT
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include <iostream>
 #include "binary_aggregator.h"
 
-int inet_int(const char* ip){
+using namespace std;
+
+unsigned int inet_int(const char* ip){
 	in_addr_t addr = inet_addr(ip);
-	return addr;
+	return htonl(addr);
 }
 
 uint8_t inet_int8(const char* ip){
-	int result = inet_int(ip);
-	return (result & 0xFF000000) >> 24;
+	unsigned int result = inet_int(ip);
+	return result & 0xFF;
+}
+
+uint16_t inet_int16(const char* ip){
+	unsigned int result = inet_int(ip);
+	return (uint16_t)(result & 0xFFFF);
 }
 
 int main(int argc, char *argv[])
 {
-	//Create a tree using the final octet
-	aggregator_tree<uint8_t> tree;
-
-	//Put values into tree
-	tree.add(inet_int8("8.8.8.0"), 5);
-	tree.add(inet_int8("8.8.8.1"), 5);
-	tree.add(inet_int8("8.8.8.5"), 4);
-	tree.add(inet_int8("8.8.8.6"), 4);
-	tree.add(inet_int8("8.8.8.7"), 4);
-	tree.add(inet_int8("8.8.8.7"), 8);
-	tree.add(inet_int8("8.8.8.5"), 4);
-	tree.print();
-
-	//Find closest node
-	aggregator_node<uint8_t>* node = tree.find_closest(inet_int8("8.8.8.1"));
+	aggregator_tree<uint16_t> tree;
+	allocation_slab<aggregator_node<uint16_t>> slab;
+	uint16_t i = inet_int16("8.8.8.1");
+	tree.add(inet_int16("8.8.8.1"), 5, slab);
+	tree.add(inet_int16("8.8.8.0"), 5, slab);
+	tree.add(inet_int16("8.8.8.5"), 4, slab);
+	tree.print(slab);
+	tree.add(inet_int16("8.8.8.6"), 4, slab);
+	tree.add(inet_int16("8.8.8.7"), 4, slab);
+	tree.add(inet_int16("8.8.8.7"), 8, slab);
+	tree.add(inet_int16("8.8.8.5"), 4, slab);
+	tree.print(slab);
 	return 0;
 }
