@@ -1,6 +1,8 @@
 #include <iostream>
 #include <arpa/inet.h>
 #include <assert.h>
+#include <queue>
+#include <set>
 #include "allocation_slab.h"
 
 template<typename KeyType>
@@ -64,24 +66,27 @@ template<typename KeyType>
 class aggregator_root : public aggregator_base<KeyType> {
 public:
 	aggregator_root() : aggregator_base<KeyType>(0, NULL_PTR, NULL_PTR, 0, 0) { }
-	uint8_t min_value() const {
+	uint8_t min_value(allocation_slab<aggregator_node<KeyType>, ptr_type>& buffer) const {
 		if (this->_right == NULL_PTR){
 			if (this->_left == NULL_PTR){
 				return 255;
 			}
-			return this->left()->value;
+			return this->left(buffer)->value;
 		}
-		return std::min(this->left()->value, this->right()->value);
+		return std::min(this->left(buffer)->value, this->right(buffer)->value);
 	}
 
-	void add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>, ptr_type>& blocks, ptr_type this_position){
+	bool add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>, ptr_type>& blocks, ptr_type this_position){
+		bool ret;
 		//Allocate a node
-		ptr_type node_position = blocks.alloc();
+		ptr_type node_position = blocks.alloc(&ret);
 		aggregator_node<KeyType>* node = blocks.get(node_position);
 		node = new (node)aggregator_node<KeyType>(this_position, key, value);
 
 		//Add the node object
 		aggregator_base<KeyType>::add(node, node_position, this_position, blocks);
+
+		return ret;
 	}
 };
 
@@ -141,14 +146,22 @@ public:
 	}
 
 
-	void add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>, ptr_type>& blocks, ptr_type this_position){
+	bool add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>, ptr_type>& blocks, ptr_type this_position){
+		bool invalidate;
 		//Allocate a node
-		ptr_type node_position = blocks.alloc();
+		ptr_type node_position = blocks.alloc(&invalidate);
 		aggregator_node<KeyType>* node = blocks.get(node_position);
 		node = new (node) aggregator_node<KeyType>(this_position, key, value);
 
+		aggregator_base<KeyType>* t = this;
+		if (invalidate){
+			t = blocks.get(this_position);
+		}
+
 		//Add the node object
-		add(node, node_position, this_position, blocks);
+		t->add(node, node_position, this_position, blocks);
+
+		return invalidate;
 	}
 	
 };
@@ -164,7 +177,7 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 	//If the left slot matches (contains) the node, add to it
 	aggregator_node<KeyType>* left = this->left(slab);
 	if (left->matches(node->addr)){
-		left->add(node, node_position, this_position, slab);
+		left->add(node, node_position, _left, slab);
 		return;
 	}
 
@@ -178,7 +191,7 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 	//If the right slot matches (contains) the node, add to it
 	aggregator_node<KeyType>* right = this->right(slab);
 	if (right->matches(node->addr)){
-		right->add(node, node_position, this_position, slab);
+		right->add(node, node_position, _right, slab);
 		return;
 	}
 
@@ -195,11 +208,18 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 			left->remask_addr();
 		}
 		else{
-			ptr_type new_ptr = slab.alloc();
+			bool ptr_invalidate;
+			ptr_type new_ptr = slab.alloc(&ptr_invalidate);
 			new (slab.get(new_ptr)) aggregator_node<KeyType>(this_position, node->addr, get_cidr(resultLeft), _left, node_position, slab);
-			_left = new_ptr;
-			left->_parent = _left;
-			node->_parent = _left;
+			aggregator_base<KeyType>* t = this;
+			if (ptr_invalidate){
+				left = t->left(slab);
+				t = slab.get(this_position);
+				node = slab.get(node_position);
+			}
+			t->_left = new_ptr;
+			left->_parent = new_ptr;
+			node->_parent = new_ptr;
 		}
 	}
 	//If the right can contain the new node
@@ -211,11 +231,18 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 			right->remask_addr();
 		}
 		else{
-			ptr_type new_ptr = slab.alloc();
+			bool ptr_invalidate;
+			ptr_type new_ptr = slab.alloc(&ptr_invalidate);
 			new (slab.get(new_ptr)) aggregator_node<KeyType>(this_position, node->addr, get_cidr(resultLeft), _right, node_position, slab);
-			_right = new_ptr;
-			right->_parent = _right;
-			node->_parent = _right;
+			aggregator_base<KeyType>* t = this;
+			if (ptr_invalidate){
+				right = this->right(slab);
+				t = slab.get(this_position);
+				node = slab.get(node_position);
+			}
+			t->_right = new_ptr;
+			right->_parent = new_ptr;
+			node->_parent = new_ptr;
 		}
 	}
 	//If the left and right can be merged (into left) and the new node stored into right
@@ -249,19 +276,26 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 			}
 			else{
 				//Complex merge
-				left->add(right, _right, this_position, slab);
+				left->add(right, _right, _left, slab);
 			}
 			_right = node_position;
 		}
 		//Left and right values are different, create container node from the minimum value
 		else{
-			ptr_type new_left = slab.alloc();
+			bool ptr_invalidate;
+			ptr_type new_left = slab.alloc(&ptr_invalidate);
 			aggregator_node<KeyType>* newL = slab.get(new_left);
+			aggregator_base<KeyType>* t = this;
+			if (ptr_invalidate){
+				left = this->left(slab);
+				right = this->right(slab);
+				t = slab.get(this_position);
+			}
 			newL = new (newL)aggregator_node<KeyType>(this_position, left->addr, get_cidr(resultChildren), _left, _right, slab);
-			_left = new_left;
-			left->_parent = _left;
-			right->_parent = _left;
-			_right = node_position;
+			left->_parent = new_left;
+			right->_parent = new_left;
+			t->_left = new_left;
+			t->_right = node_position;
 		}
 	}
 }
@@ -274,15 +308,47 @@ class aggregator_tree {
 public:
 	aggregator_root<KeyType> root;
 
-	void add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>,ptr_type>& slab){
-		root.add(key, value, slab, NULL_PTR);
+	void state_check(allocation_slab<aggregator_node<KeyType>, ptr_type>& slab) const{
+		std::queue<ptr_type> frontier;
+		std::set<ptr_type> ptrs;
+
+		frontier.push(root._left);
+		frontier.push(root._right);
+
+		while (!frontier.empty()){
+			if (frontier.front() != NULL_PTR){
+				assert(ptrs.find(frontier.front()) == ptrs.end());
+				ptrs.insert(frontier.front());
+				aggregator_node<KeyType> *n = slab.get(frontier.front());
+				frontier.push(n->_left);
+				frontier.push(n->_right);
+			}
+			frontier.pop();
+		}
 	}
 
-	void print(allocation_slab<aggregator_node<KeyType>, ptr_type>& slab){
+	void optimize(allocation_slab<aggregator_node<KeyType>, ptr_type>& slab){
+
+	}
+
+	void add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>,ptr_type>& slab){
+		root.add(key, value, slab, NULL_PTR);
+#ifdef DEBUG_BUILD
+		state_check(slab);
+#endif
+		if (slab.used > 60000){
+			optimize(slab);
+#ifdef DEBUG_BUILD
+			state_check(slab);
+#endif
+		}
+	}
+
+	void print(allocation_slab<aggregator_node<KeyType>, ptr_type>& slab) {
 		print_t<KeyType>(&root, slab);
 	}
 
-	aggregator_node<KeyType>* find_closest(uint8_t key, allocation_slab<aggregator_node<KeyType>,ptr_type>& slab){
+	aggregator_node<KeyType>* find_closest(KeyType key, allocation_slab<aggregator_node<KeyType>, ptr_type>& slab) {
 		aggregator_base<KeyType>* target = &root;
 		aggregator_node<KeyType>* checking;
 		do {
@@ -303,9 +369,10 @@ public:
 				checking = target->left(slab);
 				if (checking->matches(key)){
 					target = checking;
+					continue;
 				}
 			}
-			if (target == root)
+			if (target == &root)
 				return NULL;
 
 			return (aggregator_node<KeyType>*)target;

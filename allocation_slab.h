@@ -17,20 +17,26 @@ public:
 	allocation_free_node<PtrType>* freed;
 	PtrType count;
 	PtrType writer;
+	PtrType used;
 
-	void allocate(PtrType ammount){
+	bool allocate(PtrType ammount){
 		if (ammount != count){
+			Type* old_ptr = data;
 			data = (Type*)realloc(data, ammount * sizeof(Type));
 			count = ammount;
+
+			return (old_ptr != data);
 		}
+
+		return false;
 	}
 
-	void enlarge(){
-		allocate(count * 2);
+	bool enlarge(){
+		return allocate(count * 2);
 	}
 
-	allocation_slab(PtrType initial = 1) : writer(0), count(initial), freed(NULL) {
-		data = (Type*)malloc(initial * sizeof(Type));
+	allocation_slab() : writer(0), count(1), used(0), freed(NULL) {
+		data = (Type*)malloc(1 * sizeof(Type));
 	}
 
 	Type* get(PtrType i) const{
@@ -38,7 +44,8 @@ public:
 		return &data[i];
 	}
 
-	PtrType alloc(){
+	PtrType alloc(bool* invalidate_ptrs){
+		if (invalidate_ptrs != NULL) *invalidate_ptrs = false;
 		if (this->freed != NULL){
 			allocation_free_node<PtrType> *free = this->freed;
 			PtrType ret = free->value;
@@ -47,12 +54,15 @@ public:
 			return ret;
 		}
 		if (writer == count){
-			enlarge();
+			if (invalidate_ptrs != NULL) *invalidate_ptrs = enlarge();
+			else enlarge();
 		}
+		used++;
 		return writer++;
 	}
 
 	void free(PtrType i){
+		used--;
 		if ((i+1) == writer){
 			writer--;
 		}
