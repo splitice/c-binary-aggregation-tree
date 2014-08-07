@@ -8,7 +8,7 @@
 template<typename KeyType>
 KeyType get_cidr(KeyType mask){
 #ifdef __GNUC__
-	return __builtin_clz((unsigned int)(KeyType)~mask) - ((sizeof(unsigned int) - sizeof(KeyType))*8);
+	return __builtin_clz((unsigned int)(KeyType)~mask) - ((sizeof(unsigned int) - sizeof(KeyType)) * 8);
 #else
 	KeyType c;
 	for (c = 0; mask & 128; mask <<= 1)//1000 0000
@@ -52,18 +52,18 @@ public:
 		if (prefix_len == 0)
 			return(~((KeyType)-1));
 		else
-			return(~((1 << ((sizeof(KeyType)* 8) - prefix_len)) - 1));
+			return(~((1 << ((sizeof(KeyType) * 8) - prefix_len)) - 1));
 	}
 
 	bool matches(KeyType second){
 		return (second & netmask()) == addr;
 	}
 
-	
+
 };
 
 template<typename KeyType>
-class aggregator_root : public aggregator_base<KeyType> {
+class aggregator_root : public aggregator_base < KeyType > {
 public:
 	aggregator_root() : aggregator_base<KeyType>(0, NULL_PTR, NULL_PTR, 0, 0) { }
 	uint8_t min_value(allocation_slab<aggregator_node<KeyType>, ptr_type>& buffer) const {
@@ -91,15 +91,15 @@ public:
 };
 
 template<typename KeyType>
-class aggregator_node : public aggregator_base<KeyType> {
+class aggregator_node : public aggregator_base < KeyType > {
 public:
 	ptr_type _parent;
 	aggregator_node<KeyType>* parent(allocation_slab<aggregator_node<KeyType>, ptr_type>& buffer) const{
 		return buffer.get(_parent);
 	}
-	
+
 	aggregator_node() : aggregator_base<KeyType>(0, NULL_PTR, NULL_PTR, 0, 0), _parent(NULL_PTR) { }
-	aggregator_node(ptr_type parent, KeyType addr, uint8_t value) : aggregator_base<KeyType>(addr, NULL_PTR, NULL_PTR, sizeof(KeyType)* 8, value), _parent(parent) { }
+	aggregator_node(ptr_type parent, KeyType addr, uint8_t value) : aggregator_base<KeyType>(addr, NULL_PTR, NULL_PTR, sizeof(KeyType) * 8, value), _parent(parent) { }
 	aggregator_node(ptr_type parent, KeyType addr, uint8_t prefix_len, ptr_type left, ptr_type right, allocation_slab<aggregator_node<KeyType>, ptr_type>& slab) : aggregator_base<KeyType>(addr, left, right, prefix_len, 0), _parent(parent){
 		this->remask_addr();
 		if (IS_NULL_NODE_PTR(right)){
@@ -121,7 +121,7 @@ public:
 			this->parent(slab)->propagate_value(this->value, slab);
 	}
 
-	void propagate_value(KeyType value_new, allocation_slab<aggregator_node<KeyType>,ptr_type>& slab){
+	void propagate_value(KeyType value_new, allocation_slab<aggregator_node<KeyType>, ptr_type>& slab){
 		if (value_new < this->value){
 			this->value = value_new;
 			if (_parent != NULL_PTR)
@@ -151,7 +151,7 @@ public:
 		//Allocate a node
 		ptr_type node_position = blocks.alloc(&invalidate);
 		aggregator_node<KeyType>* node = blocks.get(node_position);
-		node = new (node) aggregator_node<KeyType>(this_position, key, value);
+		node = new (node)aggregator_node<KeyType>(this_position, key, value);
 
 		aggregator_base<KeyType>* t = this;
 		if (invalidate){
@@ -163,13 +163,14 @@ public:
 
 		return invalidate;
 	}
-	
+
 };
 
 template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<KeyType>* node, ptr_type node_position, ptr_type this_position, allocation_slab<aggregator_node<KeyType>, ptr_type>& slab){
 	//If there is nothing in the left slot, add it
 	if (IS_NULL_NODE_PTR(_left)){
 		_left = node_position;
+
 		node->propagate_value(node->value, slab);
 		return;
 	}
@@ -177,6 +178,7 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 	//If the left slot matches (contains) the node, add to it
 	aggregator_node<KeyType>* left = this->left(slab);
 	if (left->matches(node->addr)){
+
 		left->add(node, node_position, _left, slab);
 		return;
 	}
@@ -184,6 +186,7 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 	//If there is nothing in the right slot, add it
 	if (IS_NULL_NODE_PTR(_right)){
 		_right = node_position;
+
 		node->propagate_value(node->value, slab);
 		return;
 	}
@@ -191,6 +194,7 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 	//If the right slot matches (contains) the node, add to it
 	aggregator_node<KeyType>* right = this->right(slab);
 	if (right->matches(node->addr)){
+
 		right->add(node, node_position, _right, slab);
 		return;
 	}
@@ -206,17 +210,19 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 			//Widen the scope of left
 			left->prefix_len = get_cidr(resultLeft);
 			left->remask_addr();
+
+
 		}
 		else{
 			bool ptr_invalidate;
 			ptr_type new_ptr = slab.alloc(&ptr_invalidate);
-			new (slab.get(new_ptr)) aggregator_node<KeyType>(this_position, node->addr, get_cidr(resultLeft), _left, node_position, slab);
 			aggregator_base<KeyType>* t = this;
 			if (ptr_invalidate){
+				if (this_position != NULL_PTR) t = slab.get(this_position);
 				left = t->left(slab);
-				t = slab.get(this_position);
 				node = slab.get(node_position);
 			}
+			new (slab.get(new_ptr)) aggregator_node<KeyType>(this_position, node->addr, get_cidr(resultLeft), t->_left, node_position, slab);
 			t->_left = new_ptr;
 			left->_parent = new_ptr;
 			node->_parent = new_ptr;
@@ -233,13 +239,13 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 		else{
 			bool ptr_invalidate;
 			ptr_type new_ptr = slab.alloc(&ptr_invalidate);
-			new (slab.get(new_ptr)) aggregator_node<KeyType>(this_position, node->addr, get_cidr(resultLeft), _right, node_position, slab);
 			aggregator_base<KeyType>* t = this;
 			if (ptr_invalidate){
-				right = this->right(slab);
-				t = slab.get(this_position);
+				if (this_position != NULL_PTR) t = slab.get(this_position);
+				right = t->right(slab);
 				node = slab.get(node_position);
 			}
+			new (slab.get(new_ptr)) aggregator_node<KeyType>(this_position, node->addr, get_cidr(resultRight), t->_right, node_position, slab);
 			t->_right = new_ptr;
 			right->_parent = new_ptr;
 			node->_parent = new_ptr;
@@ -279,6 +285,7 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 				left->add(right, _right, _left, slab);
 			}
 			_right = node_position;
+
 		}
 		//Left and right values are different, create container node from the minimum value
 		else{
@@ -287,11 +294,11 @@ template<typename KeyType> void aggregator_base<KeyType>::add(aggregator_node<Ke
 			aggregator_node<KeyType>* newL = slab.get(new_left);
 			aggregator_base<KeyType>* t = this;
 			if (ptr_invalidate){
-				left = this->left(slab);
-				right = this->right(slab);
-				t = slab.get(this_position);
+				if (this_position != NULL_PTR) t = slab.get(this_position);
+				left = t->left(slab);
+				right = t->right(slab);
 			}
-			newL = new (newL)aggregator_node<KeyType>(this_position, left->addr, get_cidr(resultChildren), _left, _right, slab);
+			newL = new (newL)aggregator_node<KeyType>(this_position, left->addr, get_cidr(resultChildren), t->_left, t->_right, slab);
 			left->_parent = new_left;
 			right->_parent = new_left;
 			t->_left = new_left;
@@ -331,7 +338,7 @@ public:
 
 	}
 
-	void add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>,ptr_type>& slab){
+	void add(KeyType key, uint8_t value, allocation_slab<aggregator_node<KeyType>, ptr_type>& slab){
 		root.add(key, value, slab, NULL_PTR);
 #ifdef DEBUG_BUILD
 		state_check(slab);
